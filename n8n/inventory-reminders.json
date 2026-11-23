@@ -1,0 +1,12 @@
+{
+  "name": "Baby Feed - Formula inventory alerts",
+  "nodes": [
+    {"parameters":{"rule":{"interval":[{"field":"days","daysInterval":1,"triggerAtHour":9}]}},"id":"schedule","name":"Daily at 9am","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[0,0]},
+    {"parameters":{"method":"POST","url":"={{ $env.SUPABASE_URL + '/rest/v1/rpc/get_inventory_alerts' }}","sendHeaders":true,"headerParameters":{"parameters":[{"name":"apikey","value":"={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"},{"name":"Authorization","value":"={{ 'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY }}"},{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"contentType":"json","specifyBody":"json","jsonBody":"={}","options":{}},"id":"fetch","name":"Find low stock","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[220,0]},
+    {"parameters":{"jsCode":"const rows = Array.isArray($json) ? $json : (Array.isArray($json.body) ? $json.body : ($json.child_id ? [$json] : []));\nreturn rows.map(row => ({json:row}));"},"id":"split","name":"Prepare child items","type":"n8n-nodes-base.code","typeVersion":2,"position":[440,0]},
+    {"parameters":{"batchSize":1,"options":{}},"id":"loop","name":"Loop Over Items","type":"n8n-nodes-base.splitInBatches","typeVersion":3,"position":[660,0]},
+    {"parameters":{"method":"POST","url":"={{ 'https://api.telegram.org/bot' + $env.TELEGRAM_BOT_TOKEN + '/sendMessage' }}","sendBody":true,"contentType":"json","specifyBody":"json","jsonBody":"={{ JSON.stringify({chat_id:$json.chat_id,text:`🛒 ${$json.child_name} 분유 재고 알림\\n제품: ${$json.product_name}\\n남은 양: ${$json.stock_ml.toLocaleString()}ml${$json.days_left !== null ? ` (최근 사용량 기준 약 ${$json.days_left}일)` : ''}\\n${$json.reorder_now ? '배송 기간을 고려해 지금 주문해 주세요.' : '재고가 설정한 기준에 가까워지고 있어요.'}`}) }}","options":{}},"id":"send","name":"Send stock alert","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[900,-80]}
+  ],
+  "connections":{"Daily at 9am":{"main":[[{"node":"Find low stock","type":"main","index":0}]]},"Find low stock":{"main":[[{"node":"Prepare child items","type":"main","index":0}]]},"Prepare child items":{"main":[[{"node":"Loop Over Items","type":"main","index":0}]]},"Loop Over Items":{"main":[[],[{"node":"Send stock alert","type":"main","index":0}]]},"Send stock alert":{"main":[[{"node":"Loop Over Items","type":"main","index":0}]]}},
+  "active":false,"settings":{"executionOrder":"v1","timezone":"Asia/Seoul"},"versionId":"1"
+}
