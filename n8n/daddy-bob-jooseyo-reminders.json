@@ -1,0 +1,189 @@
+{
+  "name": "Daddy Bob Jooseyo - Feeding reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://tvymznlclqilemgeczdd.supabase.co/rest/v1/rpc/daddy_bob_jooseyo_get_due_reminders",
+        "sendHeaders": false,
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi"
+      },
+      "id": "fetch",
+      "name": "Get due children",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Support both HTTP response items and array-wrapped responses.\nreturn $input.all().flatMap((item, index) => {\n  const data = item.json;\n  const rows = Array.isArray(data) ? data : (Array.isArray(data.body) ? data.body : (data.child_id ? [data] : []));\n  return rows.filter(row => row.child_id && String(row.chat_id) === '9114513581')\n    .map(row => ({json: row, pairedItem: {item: index}}));\n});"
+      },
+      "id": "split",
+      "name": "Prepare child items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ '🍼 ' + $json.child_name + ' 수유 기록 리마인더\\n마지막 수유: ' + new Date($json.last_fed_at).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit', timeZone:'Asia/Seoul'}) + '\\n설정한 수유 간격이 지났어요. 이미 먹였다면 /feed ' + $json.child_name + ' 먹인양 으로 기록해 주세요.\\n아기의 배고픔 신호와 의료진 지침을 우선해 주세요.' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "send",
+      "name": "Send due reminder",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        900,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://tvymznlclqilemgeczdd.supabase.co/rest/v1/rpc/daddy_bob_jooseyo_mark_reminded",
+        "sendHeaders": false,
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({p_child_id:$('Loop Over Items').item.json.child_id}) }}",
+        "options": {},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi"
+      },
+      "id": "mark",
+      "name": "Mark reminder sent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        -80
+      ]
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Get due children",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get due children": {
+      "main": [
+        [
+          {
+            "node": "Prepare child items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare child items": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Send due reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send due reminder": {
+      "main": [
+        [
+          {
+            "node": "Mark reminder sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark reminder sent": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul"
+  }
+}

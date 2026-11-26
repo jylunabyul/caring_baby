@@ -1,0 +1,435 @@
+{
+  "name": "Daddy Bob Jooseyo - V2 personal assistant",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Telegram updates",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      }
+    },
+    {
+      "id": "parse",
+      "name": "Normalize update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        230,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Embedded in the n8n Code node by build-bot-v2.mjs. No network or credentials.\nconst update = $json;\nconst cb = update.callback_query;\nconst message = cb?.message || update.message;\nconst sender = cb?.from || message?.from;\nif (!message || message.chat?.type !== 'private' || String(message.chat.id) !== '9114513581' || String(sender?.id) !== '9114513581') return [];\nlet action = 'unknown', args = {};\nconst text = (message.text || '').trim();\nlet m;\nif (cb) {\n  const data = cb.data || '';\n  if (data === 'cancel') action = 'cancel';\n  else if ((m = data.match(/^(fed|later):([0-9a-f-]{36})$/i))) {\n    action = m[1]; args = {child_id:m[2]};\n  } else if ((m = data.match(/^confirm:([0-9a-f-]{36})$/i))) {\n    action = 'confirm'; args = {token:m[1]};\n  }\n} else if (/^\\/(help|start)(?:@\\w+)?$/i.test(text)) action = 'help';\nelse if (/^\\/cancel$/i.test(text)) action = 'cancel';\nelse if (/^\\/children$/i.test(text)) action = 'children';\nelse if ((m = text.match(/^\\/feed\\s+(.+?)\\s+(\\d{1,4})(?:\\s+(\\d{1,4}))?$/i))) {\n  action = 'feed'; args = {name:m[1],amount:Number(m[2]),prepared:Number(m[3] || m[2])};\n} else if ((m = text.match(/^(\\d{1,4})(?:\\s+(\\d{1,4}))?$/))) {\n  action = 'amount'; args = {amount:Number(m[1]),prepared:Number(m[2] || m[1])};\n} else if ((m = text.match(/^\\/(history|status|reset|childdelete)\\s+(.+)$/i))) {\n  action = m[1].toLowerCase(); args = {name:m[2].trim()};\n} else if ((m = text.match(/^\\/childadd\\s+(.+?)\\s+(\\d{4}-\\d{2}-\\d{2})$/i))) {\n  action = 'childadd'; args = {name:m[1],dob:m[2]};\n} else if ((m = text.match(/^\\/growth\\s+(.+?)\\s+(\\d+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)$/i))) {\n  action = 'growth'; args = {name:m[1],weight:Number(m[2]),height:Number(m[3])};\n} else if ((m = text.match(/^\\/delete\\s+([0-9a-f-]{36})$/i))) {\n  action = 'delete'; args = {feed_id:m[1]};\n} else if ((m = text.match(/^\\/edit\\s+([0-9a-f-]{36})\\s+(\\d{1,4})\\s+(\\d{1,4})(?:\\s+(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:Z|[+-]\\d{2}:\\d{2})))?$/i))) {\n  action = 'edit'; args = {feed_id:m[1],amount:Number(m[2]),prepared:Number(m[3]),...(m[4] ? {time:m[4]} : {})};\n} else if ((m = text.match(/^\\/stock\\s+(\\S+)\\s+(\\S+)\\s+(\\d+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+(\\d+)\\s+(\\d+)$/i))) {\n  action = 'stock'; args = {name:m[1],product:m[2],grams:Number(m[3]),scoop_g:Number(m[4]),scoop_ml:Number(m[5]),tins:Number(m[6]),lead:Number(m[7]),buffer:Number(m[8])};\n}\n// Telegram update_id provides transaction-level deduplication in the SQL RPC.\nif (update.update_id == null) return [];\nargs.update_id = String(update.update_id);\nreturn [{json:{chat_id:String(message.chat.id),action,args,callback_id:cb?.id || ''}}];\n"
+      }
+    },
+    {
+      "id": "cb-if",
+      "name": "Is callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        450,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cb",
+              "leftValue": "={{ $json.callback_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "ack",
+      "name": "Acknowledge button",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        650,
+        -120
+      ],
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerQuery",
+        "queryId": "={{ $json.callback_id }}",
+        "additionalFields": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "restore",
+      "name": "Restore request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        870,
+        -120
+      ],
+      "parameters": {
+        "jsCode": "return [{json:$('Normalize update').item.json}];"
+      }
+    },
+    {
+      "id": "command",
+      "name": "Process command",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1090,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://tvymznlclqilemgeczdd.supabase.co/rest/v1/rpc/daddy_bob_jooseyo_bot",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({p_chat_id:$json.chat_id,p_action:$json.action,p_args:$json.args}) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "response",
+      "name": "Format response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1310,
+        0
+      ],
+      "parameters": {
+        "jsCode": "if ($json.reply && $json.chat_id) return [{json:$json}];\nreturn [{json:{chat_id:'9114513581',reply:'처리하지 못했어요. 기록은 저장되지 않았을 수 있습니다. /history 아이이름으로 먼저 확인하고, 재고 입력·명령 형식 및 n8n 실행 오류를 확인해 주세요.',buttons:[]}}];"
+      }
+    },
+    {
+      "id": "reply",
+      "name": "Send reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1530,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.reply.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": "={{ ($json.buttons || []).length ? [{row:{buttons:$json.buttons.map(b => ({text:b.text, additionalFields:{callback_data:b.data} }))} }] : [] }}"
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      }
+    },
+    {
+      "id": "schedule",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "due",
+      "name": "Get reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        230,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://tvymznlclqilemgeczdd.supabase.co/rest/v1/rpc/daddy_bob_jooseyo_bot",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\"p_chat_id\":\"9114513581\",\"p_action\":\"due\",\"p_args\":{}}",
+        "options": {
+          "timeout": 20000
+        }
+      }
+    },
+    {
+      "id": "split",
+      "name": "Prepare reminders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        450,
+        400
+      ],
+      "parameters": {
+        "jsCode": "return ($json.messages || []).map(m => ({json:m}));"
+      }
+    },
+    {
+      "id": "loop",
+      "name": "Loop reminders",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        680,
+        400
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "send",
+      "name": "Send reminder",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        900,
+        400
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.reply.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": "={{ ($json.buttons || []).length ? [{row:{buttons:$json.buttons.map(b => ({text:b.text, additionalFields:{callback_data:b.data} }))} }] : [] }}"
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      }
+    },
+    {
+      "id": "mark",
+      "name": "Mark delivered",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://tvymznlclqilemgeczdd.supabase.co/rest/v1/rpc/daddy_bob_jooseyo_bot",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({p_chat_id:'9114513581',p_action:'mark',p_args:{child_id:$('Loop reminders').item.json.child_id,kind:$('Loop reminders').item.json.kind} }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram updates": {
+      "main": [
+        [
+          {
+            "node": "Normalize update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize update": {
+      "main": [
+        [
+          {
+            "node": "Is callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is callback?": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge button",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge button": {
+      "main": [
+        [
+          {
+            "node": "Restore request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore request": {
+      "main": [
+        [
+          {
+            "node": "Process command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process command": {
+      "main": [
+        [
+          {
+            "node": "Format response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format response": {
+      "main": [
+        [
+          {
+            "node": "Send reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Get reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get reminders": {
+      "main": [
+        [
+          {
+            "node": "Prepare reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare reminders": {
+      "main": [
+        [
+          {
+            "node": "Loop reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop reminders": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Send reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reminder": {
+      "main": [
+        [
+          {
+            "node": "Mark delivered",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark delivered": {
+      "main": [
+        [
+          {
+            "node": "Loop reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveManualExecutions": false
+  }
+}

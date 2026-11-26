@@ -1,0 +1,130 @@
+import {test,before,after} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {PGlite} from '@electric-sql/pglite';
+const chat='9114513581';let db,child,child2,seq=20000;
+const q=async(sql,args=[]) => (await db.query(sql,args)).rows;
+const call=async(action,args={},id=String(seq++))=>(await q('select public.daddy_bob_jooseyo_bot_v5($1,$2,$3::jsonb) as r',[chat,action,JSON.stringify({...args,...(id==null?{}:{update_id:id})})]))[0].r;
+const pending=async()=> (await q('select state from public.daddy_bob_jooseyo_sessions where chat_id=$1',[chat]))[0]?.state;
+const approve=async()=>call('decision',{decision:true,expected_token:(await pending()).token});
+const choose=async night=>call('care_choice',{overnight:night,expected_token:(await pending()).token});
+const past=async minutes=>new Date((await q('select now()-make_interval(mins=>$1) as t',[minutes]))[0].t).toISOString();
+const setup=async extra=>{await call('care_setup',{name:'별이',care_kind:'temperature',record_new:true,temperature:37.1,interval_minutes:15,overnight:true,time:await past(16),...extra});return approve();};
+const plans=()=>q('select * from public.daddy_bob_jooseyo_care_plans order by kind,medicine');
+const delivery=async id=>(await call('care_due',{},null)).messages.find(m=>m.plan_id===id);
+before(async()=>{
+ db=new PGlite();await db.exec(`create role anon;create role authenticated;create role service_role;create schema auth;create table auth.users(id uuid primary key);create function auth.uid() returns uuid language sql as $$select null::uuid$$;create function auth.role() returns text language sql as $$select current_setting('request.jwt.claim.role',true)$$;select set_config('request.jwt.claim.role','service_role',false);create table public.old_app(id int);insert into public.old_app values(1);`);
+ for(const file of ['daddy_bob_jooseyo.sql','daddy_bob_jooseyo_telegram_only.sql','daddy_bob_jooseyo_v2.sql','daddy_bob_jooseyo_v3.sql','daddy_bob_jooseyo_v5_upgrade.sql'])await db.exec(fs.readFileSync('supabase/'+file,'utf8'));
+ await db.exec(fs.readFileSync('supabase/daddy_bob_jooseyo_v5_upgrade.sql','utf8'));
+ child=(await q(`insert into public.daddy_bob_jooseyo_children(name,date_of_birth,telegram_chat_id) values('별이',current_date-20,$1) returning id`,[chat]))[0].id;
+ child2=(await q(`insert into public.daddy_bob_jooseyo_children(name,date_of_birth,telegram_chat_id) values('둘째',current_date-20,$1) returning id`,[chat]))[0].id;
+});
+after(async()=>db?.close());
+test('first actual reading + repeat plan are atomic, confirmation required, nighttime must be selected',async()=>{
+ const p=await call('care_setup',{name:'별이',care_kind:'temperature',record_new:true,temperature:37.5,interval_minutes:120,overnight:null});
+ assert.match(p.reply,/중지할 때까지/);assert.equal((await plans()).length,0);
+ assert.equal((await q('select count(*)::int as n from public.daddy_bob_jooseyo_health'))[0].n,0);
+ assert.match((await approve()).reply,/밤에도/);assert.equal((await approve()).silent,true);
+ const done=await choose(true);assert.match(done.reply,/설정해뒀어/);
+ const plan=(await plans())[0];assert.equal(plan.interval_minutes,120);assert.equal(plan.overnight,true);
+ assert.equal(new Date(plan.next_due_at)-new Date(plan.anchor_at),120*60000);
+ assert.equal((await q('select count(*)::int as n from public.daddy_bob_jooseyo_health'))[0].n,1);
+});
+test('plan-only setup uses real matching event without creating another reading; no anchor does not invent one',async()=>{
+ const before=(await q('select count(*)::int as n from public.daddy_bob_jooseyo_health'))[0].n;
+ await call('care_setup',{name:'별이',care_kind:'temperature',record_new:false,interval_minutes:180,overnight:false});await approve();
+ assert.equal((await q('select count(*)::int as n from public.daddy_bob_jooseyo_health'))[0].n,before);
+ assert.equal((await plans())[0].interval_minutes,180);
+ const missing=await call('care_setup',{name:'둘째',care_kind:'temperature',record_new:false,interval_minutes:120,overnight:true});assert.match(missing.reply,/첫 실제 기록/);
+ assert.equal((await q('select count(*)::int as n from public.daddy_bob_jooseyo_care_plans where child_id=$1',[child2]))[0].n,0);
+});
+test('care scheduler ignores feeding quiet hours, leases suppress duplicate queries, sending does not log a measurement',async()=>{
+ await setup({reminder_count:3});const plan=(await plans())[0];
+ await q("update public.daddy_bob_jooseyo_children set quiet_start='00:00',quiet_end='23:59:59.999999' where id=$1",[child]);
+ const count=(await q('select count(*)::int as n from public.daddy_bob_jooseyo_health'))[0].n;
+ const msg=await delivery(plan.id);assert(msg);assert.match(msg.reply,/体温|체온/);
+ assert.equal(await delivery(plan.id),undefined);
+ await call('mark',{...msg},null);
+ const p=(await plans())[0];assert.equal(p.remaining,2);assert(new Date(p.next_due_at)>new Date());
+ assert.equal((await q('select count(*)::int as n from public.daddy_bob_jooseyo_health'))[0].n,count);
+});
+test('failed delivery retries after lease; snooze and stop invalidate stale delivery marks',async()=>{
+ let p=(await plans())[0];await q("update public.daddy_bob_jooseyo_care_plans set next_due_at=now()-interval '1 minute',claim_until=null where id=$1",[p.id]);
+ const first=await delivery(p.id);assert(first);
+ await q("update public.daddy_bob_jooseyo_care_plans set claim_until=now()-interval '1 second' where id=$1",[p.id]);
+ const retry=await delivery(p.id);assert(retry);assert.notEqual(retry.claim_token,first.claim_token);
+ const oldRemaining=(await plans())[0].remaining;
+ await call('mark',first,null);assert.equal((await plans())[0].remaining,oldRemaining);
+ await call('care_snooze',{plan_id:p.id,minutes:30});
+ const snoozed=(await plans())[0].next_due_at;
+ await call('mark',retry,null);assert.equal(new Date((await plans())[0].next_due_at).getTime(),new Date(snoozed).getTime());
+ await call('care_cancel',{plan_id:p.id});assert.equal((await plans())[0].active,false);
+});
+test('actual subsequent reading reanchors only its own active plan; historic readings never rewind it',async()=>{
+ await setup();let p=(await plans())[0];
+ await call('health',{name:'별이',health_kind:'temperature',temperature:37.2,time:await past(1)});await approve();
+ p=(await plans())[0];assert.equal(new Date(p.next_due_at)-new Date(p.anchor_at),15*60000);const anchor=p.anchor_at;
+ await call('health',{name:'별이',health_kind:'temperature',temperature:37.0,time:await past(30)});await approve();
+ assert.equal(new Date((await plans())[0].anchor_at).getTime(),new Date(anchor).getTime());
+});
+test('medicine plans require exact actual dose/unit, keep distinct medicines separate, and never invent administration on alert',async()=>{
+ await assert.rejects(setup({care_kind:'medicine',medicine:'약A',dose:2.5,dose_unit:null,temperature:null}),/Actual medicine/);
+ await setup({care_kind:'medicine',medicine:'약A',dose:2.5,dose_unit:'ml',temperature:null,interval_minutes:360,time:await past(361)});
+ await setup({care_kind:'medicine',medicine:'약B',dose:1,dose_unit:'포',temperature:null,interval_minutes:360,time:await past(361)});
+ const medPlans=(await plans()).filter(p=>p.kind==='medicine');assert.equal(medPlans.length,2);
+ const count=(await q("select count(*)::int as n from public.daddy_bob_jooseyo_health where kind='medicine'"))[0].n;
+ const due=(await call('care_due',{},null)).messages;assert.equal(due.filter(m=>medPlans.some(p=>p.id===m.plan_id)).length,2);
+ assert.equal((await q("select count(*)::int as n from public.daddy_bob_jooseyo_health where kind='medicine'"))[0].n,count);
+ await call('care_cancel',{plan_id:medPlans[0].id});
+ assert.equal((await q('select active from public.daddy_bob_jooseyo_care_plans where id=$1',[medPlans[1].id]))[0].active,true);
+});
+test('reminder count ends plan after requested successful deliveries and explicit end time expires it',async()=>{
+ await setup({reminder_count:1});let p=(await plans()).find(p=>p.kind==='temperature');
+ const m=await delivery(p.id);assert(m);await call('mark',m,null);
+ assert.equal((await q('select active from public.daddy_bob_jooseyo_care_plans where id=$1',[p.id]))[0].active,false);
+ await setup({});p=(await plans()).find(p=>p.kind==='temperature');
+ await q("update public.daddy_bob_jooseyo_care_plans set end_at=now()-interval '1 second' where id=$1",[p.id]);
+ assert.equal(await delivery(p.id),undefined);assert.equal((await q('select active from public.daddy_bob_jooseyo_care_plans where id=$1',[p.id]))[0].active,false);
+});
+test('day-only plans follow their own fixed quiet window instead of child feeding settings',async()=>{
+ await setup({overnight:false});const p=(await plans()).find(p=>p.kind==='temperature');
+ const night=(await q("select public.daddy_bob_jooseyo_is_quiet('22:00','08:00',(now() at time zone 'Asia/Seoul')::time) as value"))[0].value;
+ assert.equal(!!(await delivery(p.id)),!night);
+});
+test('wrong user/role cannot operate plans, cancelled proposal cannot save, child deletion cascades plans only for that child',async()=>{
+ const p=await call('care_setup',{name:'둘째',care_kind:'temperature',record_new:true,temperature:37.0,interval_minutes:120,overnight:true});
+ await call('decision',{decision:false,expected_token:(await pending()).token});
+ assert.equal((await q('select count(*)::int as n from public.daddy_bob_jooseyo_health where child_id=$1',[child2]))[0].n,0);
+ await assert.rejects(db.query("select public.daddy_bob_jooseyo_bot_v5('42','care_list','{}')"),/Not authorized/);
+ const perms=(await q("select relrowsecurity,has_table_privilege('authenticated',oid,'SELECT') as allowed from pg_class where relname='daddy_bob_jooseyo_care_plans'"))[0];assert.equal(perms.relrowsecurity,true);assert.equal(perms.allowed,false);
+ await call('childdelete',{name:'별이'});await approve();
+ assert.equal((await q('select count(*)::int as n from public.daddy_bob_jooseyo_care_plans where child_id=$1',[child]))[0].n,0);
+ assert.equal((await q('select count(*)::int as n from public.old_app'))[0].n,1);
+});
+const w=JSON.parse(fs.readFileSync('n8n/daddy-bob-jooseyo-v5.json','utf8'));
+test('night/day callbacks and local replies select the current plan token without another model question',()=>{
+ const normalize=new Function('$json',w.nodes.find(n=>n.name==='Normalize update').parameters.jsCode);
+ const token='00000000-0000-0000-0000-000000000001';
+ const update={update_id:1,callback_query:{id:'q',from:{id:Number(chat)},message:{chat:{id:Number(chat),type:'private'}},data:'care_night:'+token}};
+ const n=normalize(update)[0].json;assert.equal(n.action,'care_choice');assert.equal(n.args.overnight,true);
+ const quick=new Function('$json','$',w.nodes.find(n=>n.name==='Resolve short replies').parameters.jsCode);
+ const c={children:[],recent:[],pending:{action:'care_setup',token,args:{overnight:null}}};
+ const chosen=quick(c,()=>({item:{json:{chat_id:chat,raw_text:'밤에도 알려줘',args:{update_id:'x'}}}}))[0].json;
+ assert.equal(chosen.action,'care_choice');assert.equal(chosen.args.overnight,true);assert.equal(chosen.args.expected_token,token);
+});
+test('model care intent rejects invented intervals/anchor IDs and includes care context; one-minute care schedule stays independent',()=>{
+ const get=name=>w.nodes.find(n=>n.name===name);
+ const build=new Function('$json','$',get('Build Gemini request').parameters.jsCode);
+ const n={chat_id:chat,action:'unknown',raw_text:'별이 37.5도, 2시간마다 확인 알려줘',args:{update_id:'model'},callback_id:''};
+ const c={children:[{id:'c',name:'별이'}],recent:[],health_recent:[],care_plans:[],pending:null,now_kst:'2026-11-25T22:00:00+09:00'};
+ const built=build({context:c},()=>({item:{json:n}}))[0].json;
+ assert(JSON.parse(built.request.contents[0].parts[0].text).context.care_plans);
+ const validate=new Function('$json','$',get('Validate Gemini intent').parameters.jsCode);
+ const map=ai=>validate({choices:[{finish_reason:'stop',message:{content:JSON.stringify({confidence:0.99,...ai})}}]},()=>({item:{json:built}}))[0].json;
+ const valid={action:'care_setup',name:'별이',care_kind:'temperature',record_new:true,temperature:37.5,interval_minutes:120,overnight:null};
+ assert.equal(map(valid).action,'care_setup');assert.equal(map({...valid,interval_minutes:null}).action,'clarify');
+ assert.equal(map({...valid,record_new:false,anchor_id:'invented'}).action,'clarify');
+ assert.equal(map({...valid,care_kind:'medicine',medicine:'약명',dose:2.5,dose_unit:null}).action,'clarify');
+ assert.equal(get('Care reminders every minute').parameters.rule.interval[0].minutesInterval,1);
+ assert(w.connections['Get care reminders']);
+});

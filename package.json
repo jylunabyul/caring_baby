@@ -1,0 +1,17 @@
+{
+  "name": "daddy-bob-jooseyo-workflows",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "build:bot": "node scripts/build-bot-v2.mjs && node scripts/build-bot-v3.mjs && node scripts/build-bot-gemini.mjs && node scripts/build-bot-gemini-native.mjs && node scripts/build-bot-v4.mjs && node scripts/build-bot-v5.mjs && node scripts/build-care-upgrade.mjs && node scripts/build-formal-tone.mjs && node scripts/build-conversation.mjs && node scripts/build-bot-v6.mjs && node scripts/build-korean-io.mjs && node scripts/build-bot-v7.mjs && node scripts/build-bot-v8.mjs && node scripts/build-bot-v9.mjs && node scripts/build-bot-v10.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
+    "@n8n/tournament": "1.1.0"
+  }
+}

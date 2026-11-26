@@ -76,3 +76,27 @@ GitHub Actions에서 JavaScript 문법과 n8n JSON/연결 구조를 자동 검�
 DB 실행, 이메일 로그인, Telegram 발송까지 검증하는 테스트는 아니므로 서비스 연결 후 실제 수유 기록과 알림을 확인하세요.
 n8n 환경변수 이름은 `n8n/.env.example`을 참고하고 실제 값은 호스팅 환경에 설정하세요.
 워크플로우는 비활성 상태로 제공하며, Telegram Trigger의 봇 자격증명도 직접 연결해야 합니다.
+
+## Telegram 전용 V2
+
+개인 봇용 확인 대화, 기록 수정·삭제, 다자녀, 성장 기록, 조유량 기반 구매 알림은 [V2 적용 안내](README-bot-v2.md)를 참고하세요. 기존 DB를 유지하는 추가 SQL과 자격 증명을 선택해 가져올 수 있는 n8n JSON을 제공합니다. 운영 적용 전에 기존 Telegram Trigger와 알림 스케줄을 중지하는 순서를 확인하세요.
+
+자연어 명령·“응/아니” 확인·야간 알림 휴식은 [V3 안내](README-bot-v3.md)를 참고하세요. V3는 V2 적용 후 추가 SQL과 n8n 워크플로우 교체가 필요합니다.
+
+확인 오타 처리, 편안한 말투, 아침 계획 알림, 발열·투약·메모 기록은 [V4 안내](README-bot-v4.md)를 참고하세요. V3 적용 후 추가 SQL과 새 기본 Google Gemini 워크플로우를 사용합니다.
+
+첫 실제 투약·체온 기록에서 간격·야간 여부를 정하는 반복 리마인더는 [V5 안내](README-bot-v5.md)를 참고하세요. V4 적용 후 추가 SQL과 V5 워크플로우를 사용합니다.
+
+한 메시지의 복합 요청, 일괄 확인·원자적 저장, 정확한 처리 결과 회신, 개인 채팅 접근 제한은 [V6 안내](README-bot-v6.md)를 참고하세요.
+
+“약이랑 체온은 그만 기록해도 돼”로 알림만 중지하고 낮잠·밤잠을 기록하려면 [V7 안내](README-bot-v7.md)를 참고하세요.
+
+## 현재 권장 버전: V10
+
+[특수 이벤트 기록 안내](n8n/README-bot-v10.md)와 [V10 워크플로우](n8n/daddy-bob-jooseyo-v10.json)를 사용합니다. 수유·성장·투약·체온·수면·대변·병원 진료 기록, 한국 시간 하루 타임라인, 매일 오후 9시 전체 리포트를 포함합니다. 기존 워크플로우의 게시를 해제하고 자격증명을 선택한 새 워크플로우를 게시하세요.
+
+V5 SQL까지 설치된 환경은 [V5 → V8 통합 SQL](supabase/daddy_bob_jooseyo_v5_to_v8.sql)을 실행하면 됩니다. V8이 설치되어 있다면 [오늘 총 수유량 표시 SQL](supabase/daddy_bob_jooseyo_history_total.sql)만 추가 적용하세요. 기존 기록은 유지합니다. 최근 기록 맨 위에 한국 시간 오늘의 총 섭취량과 사용자가 정한 1,000ml 관리 기준까지의 남은 양/초과량을 표시합니다. 이 값은 개별 아이의 의학적 권장량을 판정하는 기준이 아닙니다.
+
+자세한 날짜 조회와 보고 범위는 [V8 안내](n8n/README-bot-v8.md), 오후 9시 자동 리포트는 [V9 안내](n8n/README-bot-v9.md)를 참고하세요. SQL 적용과 n8n 게시는 수동 작업이며, GitHub 푸시만으로 운영 환경이 바뀌지는 않습니다.
+
+로컬 검증: `npm ci`, `npm run check`, `npm test`. 기본 워크플로우 생성은 `npm run build:bot`, 합계 패치 재생성은 `node scripts/build-history-total.mjs`, 통합 SQL 재생성은 `node scripts/build-v8-upgrade.mjs`로 수행합니다.
